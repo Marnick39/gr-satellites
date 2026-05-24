@@ -8,6 +8,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 
+import os
 import socket
 import threading
 import zipfile
@@ -76,6 +77,13 @@ class FileReceiverQO100Multimedia(FileReceiver):
                     .replace('\x00', ' '))
         except Exception as e:
             print('Could not obtain filename:', e)
+            return None
+        # Strip any path components from the RF-supplied filename to prevent
+        # path traversal (audit finding F4). Without this, an attacker can
+        # write to any path the operator's user can write to, including
+        # ~/.local/lib/python*/site-packages/*.pth which CPython auto-executes.
+        name = os.path.basename(os.path.normpath(name))
+        if not name or name in ('.', '..'):
             return None
         if self.frame_type(chunk) in [3, 4, 5]:
             # ASCII, HTML and binary files are zipped, so we add the .zip
