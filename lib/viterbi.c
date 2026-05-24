@@ -60,7 +60,9 @@ struct v27 {
 };
 
 static branchtab_t branchtab[2];
-static struct v27 v27_local;
+/* decisions_local is a scratch decision_t used inside
+   update_viterbi_packed() for per-bit butterfly computation. It is not
+   per-decoder-instance state, so leave it as a file-scope static. */
 static decision_t decisions_local;
 
 /* Create 256-entry odd-parity lookup table */
@@ -137,18 +139,24 @@ void set_viterbi_polynomial_packed(int16_t polys[2])
     init = true;
 }
 
-/* Create a new instance of a Viterbi decoder */
+/* Create a new instance of a Viterbi decoder. Audit finding F60:
+   previously returned a pointer to a file-scope static, so two
+   concurrent flowgraph blocks shared state and double-freed at
+   teardown. Now allocates per-instance and the destructor frees it. */
 void* create_viterbi_packed(int16_t len)
 {
-    /* Keep state in internal RAM */
-    struct v27* vp = &v27_local;
+    struct v27* vp = malloc(sizeof(struct v27));
+    if (vp == NULL)
+        return NULL;
 
     if (!init)
         set_viterbi_polynomial_packed(polys);
 
     vp->dlen = (len + 6) * sizeof(decision_t);
-    if ((vp->decisions = malloc(vp->dlen)) == NULL)
+    if ((vp->decisions = malloc(vp->dlen)) == NULL) {
+        free(vp);
         return NULL;
+    }
 
     init_viterbi_packed(vp, 0);
 
@@ -194,8 +202,13 @@ void delete_viterbi_packed(void* p)
 {
     struct v27* vp = p;
 
-    if (vp->decisions != NULL)
+    if (vp == NULL)
+        return;
+    if (vp->decisions != NULL) {
         free((void*)vp->decisions);
+        vp->decisions = NULL;
+    }
+    free(vp);
 }
 
 /* C-language butterfly */
