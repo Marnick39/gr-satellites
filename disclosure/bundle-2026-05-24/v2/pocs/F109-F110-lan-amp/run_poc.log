@@ -1,0 +1,32 @@
+==========================================================================
+Starting listener (background)...
+==========================================================================
+==========================================================================
+Container netstat snapshot (LISTEN on 0.0.0.0:52001 = F109):
+==========================================================================
+-- /proc/net/tcp --
+  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode                                                     
+   0: 00000000:CB21 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 23790468 1 0000000020920b0d 100 0 0 10 0                  
+-- /proc/net/tcp6 --
+  sl  local_address                         remote_address                        st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode
+-- lsof on 52001 --
+(ss/netstat not available)
+==========================================================================
+Running attacker (separate process, same host = LAN-attacker analog)...
+==========================================================================
+########################################################################
+# F109/F110 — LAN attacker (separate process, same host)
+# Target:  127.0.0.1:52001  (bound by listener due to host="")
+# Frame:   41 bytes, KISS-framed AX.25 UI
+########################################################################
+[attacker] TCP connect SUCCEEDED on attempt 1
+[attacker] sent 41 bytes; hex=c0009a60a6864040609a60a68640406103f0434841494e2d462d4c414e2d494e...
+[attacker] socket closed; injection complete
+
+########################################################################
+# RESULT: pure-network injection — NO SDR, NO RF, NO AUDIO USED.
+# If the listener process logs the frame, F109 is proven.
+########################################################################
+==========================================================================
+Listener log:
+==========================================================================

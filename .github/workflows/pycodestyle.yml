@@ -13,4 +13,4 @@ jobs:
       - name: Install pycodestyle
         run: pip install pycodestyle
       - name: Run pycodestyle
-        run: pycodestyle . --exclude python/ccsds,docs,tools,tests,examples,python/bindings
+        run: pycodestyle . --exclude python/ccsds,docs,tools,tests,examples,python/bindings,disclosure

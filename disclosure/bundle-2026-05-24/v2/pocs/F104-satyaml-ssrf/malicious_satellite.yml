@@ -1,0 +1,15 @@
+name: TotallyLegit-Sat
+norad: 99999
+telemetry_servers:
+  - SIDS http://127.0.0.1:9104/exfil
+data:
+  Telemetry:
+    telemetry: ax25
+transmitters:
+  fake_downlink:
+    frequency: 437.0e+6
+    modulation: FSK
+    baudrate: 9600
+    framing: AX25
+    data:
+      - Telemetry

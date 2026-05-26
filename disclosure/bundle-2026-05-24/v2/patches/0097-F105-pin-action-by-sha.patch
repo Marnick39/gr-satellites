@@ -1,0 +1,36 @@
+From a2aa4f7599a6fa226b7738386300d4c3251ea8e6 Mon Sep 17 00:00:00 2001
+From: Marnick Vandecauter <security@marnick.net>
+Date: Sun, 24 May 2026 22:28:26 +0000
+Subject: [PATCH 12/12] F105 (hygiene): pin daniestevez/gr-satellites-ci-action
+ by SHA
+
+OpenSSF Scorecard 'Pinned-Dependencies' recommends pinning third-party
+GitHub Actions by full commit SHA rather than by tag. A tag is mutable;
+if the action's repo is compromised (or just refactored), every PR
+that runs against the workflow inherits the new code.
+
+Reference: audit finding F105 (gr-satellites v5.9.0 audit, 2026-05-24)
+SHA verified 2026-05-24 against api.github.com/repos/daniestevez/gr-satellites-ci-action/git/refs/tags/v2.1.0
+
+---
+ .github/workflows/build-ubuntu.yml | 7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/.github/workflows/build-ubuntu.yml b/.github/workflows/build-ubuntu.yml
+index 1df1e48..e8e3c95 100644
+--- a/.github/workflows/build-ubuntu.yml
++++ b/.github/workflows/build-ubuntu.yml
+@@ -13,4 +13,9 @@ jobs:
+     steps:
+       # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
+       - uses: actions/checkout@v4
+-      - uses: daniestevez/gr-satellites-ci-action@v2.1.0
++      # Pin third-party actions by commit SHA, not by tag, so a future
++      # tag move (intentional or compromised) cannot silently replace
++      # the CI workflow that runs against every PR. The comment after
++      # the SHA preserves the human-readable version. Verify with
++      # `gh api repos/daniestevez/gr-satellites-ci-action/git/refs/tags/v2.1.0`.
++      - uses: daniestevez/gr-satellites-ci-action@e9aa8f8569301c797dcaffb3a99f25c00ed3d0d3  # v2.1.0
+-- 
+2.34.1
+

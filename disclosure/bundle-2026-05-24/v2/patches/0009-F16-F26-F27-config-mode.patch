@@ -1,0 +1,95 @@
+From 75803546f79b279f45067e7ffc335d5b5ff0b2e0 Mon Sep 17 00:00:00 2001
+From: Marnick Vandecauter <security@marnick.net>
+Date: Sun, 24 May 2026 22:26:57 +0000
+Subject: [PATCH 09/12] F16+F26+F27: tighten ~/.gr_satellites config file modes
+ and create-race
+
+Three related defects in python/utils/config.py:
+
+F16: the config.ini was created with whatever the operator's umask
+gave (typically 0o644), so any other unprivileged user on the same
+Unix host could read it. The file contains plaintext warehouse
+credentials (FUNcube auth_code, BME password) and the path to the
+PW-Sat2 credentials JSON.
+
+F26: Path.mkdir() did not pass exist_ok=True, so two simultaneous
+gr-satellites starts (cron + manual run, two flowgraph windows)
+raced and one aborted with FileExistsError before constructing its
+flowgraph.
+
+F27: ~/.gr_satellites/ inherited a world-traversable mode from the
+default umask, so another local user could reach config.ini even if
+its own bits were later tightened.
+
+Fix: mkdir(mode=0o700, exist_ok=True) + chmod(0o700) to repair an
+existing directory, plus os.open(O_CREAT|O_EXCL, 0o600) for the
+config file itself, and an os.chmod on load to tighten any
+pre-existing file that was created by an older gr-satellites.
+
+Reference: audit findings F16 + F26 + F27 (gr-satellites v5.9.0 audit, 2026-05-24)
+CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:L/I:L/A:N = 4.4
+---
+ python/utils/config.py | 29 ++++++++++++++++++++++++++---
+ 1 file changed, 26 insertions(+), 3 deletions(-)
+
+diff --git a/python/utils/config.py b/python/utils/config.py
+index 609b3b2..0010d82 100644
+--- a/python/utils/config.py
++++ b/python/utils/config.py
+@@ -9,6 +9,8 @@
+ #
+ 
+ import configparser
++import os
++import stat
+ from pathlib import Path
+ 
+ 
+@@ -21,12 +23,27 @@ def open_config():
+     config_dir = Path.home() / '.gr_satellites'
+     config_filename = config_dir / 'config.ini'
+ 
+-    if not config_dir.exists():
+-        Path.mkdir(config_dir)
++    # Audit finding F26: exist_ok=True so two concurrent gr-satellites
++    # starts do not race into FileExistsError. Audit finding F27: mode
++    # 0o700 so the parent is not world-traversable on a shared host.
++    config_dir.mkdir(mode=0o700, exist_ok=True)
++    try:
++        os.chmod(config_dir, 0o700)
++    except OSError:
++        pass
+ 
+     if not config_filename.exists():
+         return write_default_config(config_filename)
+ 
++    # Audit finding F16: tighten any pre-existing config that was created
++    # with the default umask 0o644 by an older gr-satellites.
++    try:
++        current = stat.S_IMODE(os.stat(config_filename).st_mode)
++        if current & 0o077:
++            os.chmod(config_filename, 0o600)
++    except OSError:
++        pass
++
+     config = configparser.ConfigParser()
+     config.read(config_filename)
+     return config
+@@ -66,7 +83,13 @@ def write_default_config(file):
+         'password': '',
+     }
+ 
+-    with open(file, 'w') as f:
++    # Audit finding F16: create the file with mode 0o600 atomically so
++    # the credentials are never readable by other local users, even for
++    # the brief window between create and the eventual chmod.
++    fd = os.open(str(file),
++                 os.O_WRONLY | os.O_CREAT | os.O_EXCL,
++                 0o600)
++    with os.fdopen(fd, 'w') as f:
+         config.write(f)
+ 
+     return config
+-- 
+2.34.1
+

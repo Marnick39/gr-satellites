@@ -1,0 +1,51 @@
+From 237fe335293be0af69b6f80c40709b4e457adef6 Mon Sep 17 00:00:00 2001
+From: Marnick Vandecauter <security@marnick.net>
+Date: Sun, 24 May 2026 22:13:51 +0000
+Subject: [PATCH 01/12] F4: sanitize RF-supplied filename in qo100_multimedia
+ file_id()
+
+Strip path components from the 50-byte ASCII filename slice that comes
+from the QO-100 multimedia beacon frame before it reaches Path
+composition in FileReceiver._new_file(). Without this, an attacker can
+write to any path the operator's user can write to, including
+~/.local/lib/python*/site-packages/*.pth which CPython auto-executes
+on the next python3 invocation.
+
+Reference: audit finding F4 (gr-satellites v5.9.0 audit, 2026-05-24)
+CVSS:3.1/AV:A/AC:H/PR:N/UI:N/S:C/C:H/I:H/A:H = 8.4
+(AV downgraded from N to A after maintainer reach analysis: RF-only
+attack requires directional antenna boresight proximity or QO-100
+uplink overpowering LEILA, not internet reach.)
+---
+ python/filereceiver/qo100_multimedia.py | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/python/filereceiver/qo100_multimedia.py b/python/filereceiver/qo100_multimedia.py
+index 917df0e..73ca1c5 100644
+--- a/python/filereceiver/qo100_multimedia.py
++++ b/python/filereceiver/qo100_multimedia.py
+@@ -8,6 +8,7 @@
+ # SPDX-License-Identifier: GPL-3.0-or-later
+ #
+ 
++import os
+ import socket
+ import threading
+ import zipfile
+@@ -77,6 +78,13 @@ class FileReceiverQO100Multimedia(FileReceiver):
+         except Exception as e:
+             print('Could not obtain filename:', e)
+             return None
++        # Strip any path components from the RF-supplied filename to prevent
++        # path traversal (audit finding F4). Without this, an attacker can
++        # write to any path the operator's user can write to, including
++        # ~/.local/lib/python*/site-packages/*.pth which CPython auto-executes.
++        name = os.path.basename(os.path.normpath(name))
++        if not name or name in ('.', '..'):
++            return None
+         if self.frame_type(chunk) in [3, 4, 5]:
+             # ASCII, HTML and binary files are zipped, so we add the .zip
+             # extension
+-- 
+2.34.1
+

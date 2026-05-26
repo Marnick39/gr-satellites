@@ -1,0 +1,17 @@
+########################################################################
+# F109/F110 amplifier — does the LAN bytes trigger F18 downstream?
+########################################################################
+[main] starting flowgraph
+[main] dispatching PDU #0 to parser.handle_msg
+[main] *** F18 FIRED: UnicodeDecodeError escapes handle_msg ***
+[main]     'ascii' codec can't decode byte 0xff in position 5: ordinal not in range(128)
+
+########################################################################
+# Attacker result:    {'connect': True, 'sent': 15}
+# PDUs into parser:   1
+# F18 fired downstream:  True
+########################################################################
+### CHAIN F + F18 AMPLIFICATION PROVEN END-TO-END ###
+### LAN attacker -> 0.0.0.0:52001 -> KISS-stripped ->
+### telemetry_parser try/except -> UnicodeDecodeError
+### -> escapes handler -> GR scheduler kills msg-handler thread

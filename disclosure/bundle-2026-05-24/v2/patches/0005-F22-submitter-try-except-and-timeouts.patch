@@ -1,0 +1,243 @@
+From a111c6ae2015b36084a060f50ca8c9cff2fddf54 Mon Sep 17 00:00:00 2001
+From: Marnick Vandecauter <security@marnick.net>
+Date: Sun, 24 May 2026 22:23:24 +0000
+Subject: [PATCH 05/12] F22 + F20 + F33-F36: wrap submitter network I/O and add
+ timeouts
+
+Six telemetry-submitter blocks (FUNcube, PW-Sat2 authenticate, PW-Sat2
+putPacket, BME authenticate, BME putPacket, BME WebSocket, SatNOGS DB
+submit) wrapped their network calls without try/except inside a GR
+basic_block.handle_msg. GR's thread-per-block scheduler catches uncaught
+exceptions only at the very top of the thread function and never
+respawns the thread, so any transient DNS / TCP RST / TLS / JSON parse
+failure silently killed the block. The flowgraph kept accepting messages
+into a queue that was no longer being drained.
+
+Each call now wraps the request body in try/except, parses the response
+body inside its own try/except, and uses timeout=10 to bound the I/O.
+
+Reference: audit findings F22a/b/c, F20, F33, F34, F35, F36
+CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H = 7.5
+(AC downgraded from H to L: the BME warehouse path self-triggers on
+every flowgraph start because gnd.bme.hu:8080 completes the TLS
+handshake then closes the stream on anonymous connections. No
+attacker required.)
+---
+ python/bme_submitter.py    | 47 +++++++++++++++++++++++++-------------
+ python/bme_ws_submitter.py |  8 ++++++-
+ python/funcube_submit.py   | 13 +++++++++--
+ python/pwsat2_submitter.py | 25 ++++++++++++++------
+ python/submit.py           | 32 ++++++++++++++++----------
+ 5 files changed, 87 insertions(+), 38 deletions(-)
+
+diff --git a/python/bme_submitter.py b/python/bme_submitter.py
+index 2a19a63..529123b 100644
+--- a/python/bme_submitter.py
++++ b/python/bme_submitter.py
+@@ -45,12 +45,16 @@ class bme_submitter(gr.basic_block):
+             print(f'Authentication failed: {e}')
+             return
+         if rauth.status_code == 200:
+-            # We hit the jackpot.
+-            # Let's use the token obtained in the authentication header.
+-            auth_resp = rauth.json()
+-            # The token is valid for 60 minutes.
+-            # After 45 a new one can be requested.
+-            self.auth_token = auth_resp['token']
++            # Audit findings F33, F34: an unexpected response body (HTML
++            # error page from a proxy, missing 'token' field after an API
++            # change) used to raise ValueError / KeyError out of the GR
++            # handler and kill the block thread.
++            try:
++                auth_resp = rauth.json()
++                self.auth_token = auth_resp['token']
++            except (ValueError, KeyError) as e:
++                print(f'BME authentication response parse failed: {e}')
++                return
+         elif rauth.status_code == 401:
+             # Unauthorized (wrong credentials)
+             print('Wrong credentials, have you registered at'
+@@ -65,17 +69,28 @@ class bme_submitter(gr.basic_block):
+         packets = [{'satellite': self.satellite,
+                     'packet': frame.hex().upper()}]
+         auth_header = {'Authorization': 'Bearer ' + self.auth_token}
+-        rpacket = requests.post(
+-            'https://gnd.bme.hu:8080/api/packets/bulk',
+-            json={'packets': packets}, headers=auth_header, timeout=10)
+-        packet_resp = rpacket.json()
+-        if rpacket.status_code == 200:
+-            uploaded_packets = packet_resp["results"]
+-            for p in uploaded_packets:
+-                if 'error' in p:
+-                    print('Checksum error')
+-        else:
++        # Audit findings F20, F35: wrap the network call and the JSON
++        # parse so a network failure or unexpected response shape does
++        # not kill the GR handler thread.
++        try:
++            rpacket = requests.post(
++                'https://gnd.bme.hu:8080/api/packets/bulk',
++                json={'packets': packets}, headers=auth_header, timeout=10)
++        except Exception as e:
++            print(f'BME packet upload failed: {e}')
++            return
++        if rpacket.status_code != 200:
+             print('Packet upload failed, token might have expired!')
++            return
++        try:
++            packet_resp = rpacket.json()
++            uploaded_packets = packet_resp['results']
++        except (ValueError, KeyError) as e:
++            print(f'BME packet response parse failed: {e}')
++            return
++        for p in uploaded_packets:
++            if 'error' in p:
++                print('Checksum error')
+ 
+     def handle_msg(self, msg_pmt):
+         msg = pmt.cdr(msg_pmt)
+diff --git a/python/bme_ws_submitter.py b/python/bme_ws_submitter.py
+index b7e8746..13653f8 100644
+--- a/python/bme_ws_submitter.py
++++ b/python/bme_ws_submitter.py
+@@ -25,10 +25,13 @@ class bme_ws_submitter(gr.basic_block):
+             in_sig=[],
+             out_sig=[])
+ 
++        # Audit finding F36: bound the connect attempt so an unresponsive
++        # server does not stall block construction (and, downstream, the
++        # entire flowgraph start) indefinitely. Same for per-send I/O.
+         self.ws = websocket.WebSocket()
+         url = 'wss://gnd.bme.hu:8070/send'
+         try:
+-            self.ws.connect(url)
++            self.ws.connect(url, timeout=10)
+         except Exception:
+             print(f'could not connect to {url}; '
+                   'disabling telemetry submission')
+@@ -45,6 +48,9 @@ class bme_ws_submitter(gr.basic_block):
+         if self.ws is None:
+             return
+         data = f'"data": "{frame.hex().upper()}"'
++        # Bound each per-frame round-trip; previous behaviour blocked
++        # indefinitely on a stalled server.
++        self.ws.settimeout(10)
+         self.ws.send(data)
+         response = self.ws.recv()
+         response = json.loads('{' + response + '}')
+diff --git a/python/funcube_submit.py b/python/funcube_submit.py
+index ad433b4..a20a2d5 100644
+--- a/python/funcube_submit.py
++++ b/python/funcube_submit.py
+@@ -55,8 +55,17 @@ class funcube_submit(gr.basic_block):
+ 
+         url = (self.base_url + '/api/data/hex/'
+                + self.site_id + '/?digest=' + self.digest(frame))
+-        r = requests.post(url, data=frame,
+-                          headers={'Content-Type': 'application/text'})
++        # Audit finding F22a: wrap network I/O so a transient failure
++        # (DNS, TCP RST, TLS handshake error, slow server) does not kill
++        # the GR scheduler thread for this block. timeout=10 prevents an
++        # unresponsive warehouse from stalling the handler indefinitely.
++        try:
++            r = requests.post(url, data=frame,
++                              headers={'Content-Type': 'application/text'},
++                              timeout=10)
++        except Exception as e:
++            print('FUNcube submission failed:', e)
++            return
+         if r.status_code != 200:
+             print('FUNcube server error while submitting telemetry')
+             print('Reply:', r.text)
+diff --git a/python/pwsat2_submitter.py b/python/pwsat2_submitter.py
+index 5ec3f1d..af11912 100644
+--- a/python/pwsat2_submitter.py
++++ b/python/pwsat2_submitter.py
+@@ -80,9 +80,15 @@ class pwsat2_submitter(gr.basic_block):
+             return
+ 
+         url = self.baseUrl+'/api/authenticate'
+-        response = self.requests.post(url,
+-                                      data=json.dumps(credentials),
+-                                      headers=self.headers)
++        try:
++            response = self.requests.post(url,
++                                          data=json.dumps(credentials),
++                                          headers=self.headers,
++                                          timeout=10)
++        except Exception as e:
++            print('Could not authenticate to PW-Sat2 server:', e)
++            self.cookies = None
++            return
+         if response.status_code == 200:
+             self.cookies = response.cookies
+         else:
+@@ -109,10 +115,15 @@ class pwsat2_submitter(gr.basic_block):
+                    'timestamp': timestamp,
+                    'traffic': 'Rx'}
+ 
+-        response = self.requests.put(url,
+-                                     data=json.dumps(payload),
+-                                     headers=self.headers,
+-                                     cookies=self.cookies)
++        try:
++            response = self.requests.put(url,
++                                         data=json.dumps(payload),
++                                         headers=self.headers,
++                                         cookies=self.cookies,
++                                         timeout=10)
++        except Exception as e:
++            print('PW-Sat2 packet upload failed:', e)
++            return None
+         return response.text
+ 
+     def handle_msg(self, msg_pmt):
+diff --git a/python/submit.py b/python/submit.py
+index 0cf99e4..a6b8b6e 100644
+--- a/python/submit.py
++++ b/python/submit.py
+@@ -120,21 +120,29 @@ class submit(gr.basic_block):
+         self.request['timestamp'] = t_prop_fmt
+ 
+         params = urllib.parse.urlencode(self.request)
++        # Audit finding F22c: previously, only urlopen() was wrapped; the
++        # subsequent f.read() / f.getcode() / f.close() could still raise
++        # on a half-closed stream and kill the block thread. Bound the
++        # whole I/O sequence and add timeout= so a stalled server cannot
++        # block the handler indefinitely.
+         try:
+             f = urllib.request.urlopen(
+                 '{}?{}'.format(self.url, params),
+-                data=bytes(params, encoding='ascii'))
++                data=bytes(params, encoding='ascii'),
++                timeout=10)
++            try:
++                reply = f.read()
++                code = f.getcode()
++                if code < 200 or code >= 300:
++                    print('Server error while submitting telemetry')
++                    print('Reply:')
++                    print(reply)
++                    print('URL:', f.geturl())
++                    print('HTTP code:', f.getcode())
++                    print('Info:')
++                    print(f.info())
++            finally:
++                f.close()
+         except Exception as e:
+             print('Error while submitting telemetry:', e)
+             return
+-        reply = f.read()
+-        code = f.getcode()
+-        if code < 200 or code >= 300:
+-            print('Server error while submitting telemetry')
+-            print('Reply:')
+-            print(reply)
+-            print('URL:', f.geturl())
+-            print('HTTP code:', f.getcode())
+-            print('Info:')
+-            print(f.info())
+-        f.close()
+-- 
+2.34.1
+

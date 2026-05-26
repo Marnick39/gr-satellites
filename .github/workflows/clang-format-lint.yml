@@ -11,5 +11,7 @@ jobs:
     - uses: actions/checkout@v4
     - name: Run clang-format
       run: |
-        find . -name '*.cpp' -o -name '*.hpp' -o -name '*.h' -o -name '*.cc' -o -name '*.c' | \
+        find . -path ./disclosure -prune -o \
+          \( -name '*.cpp' -o -name '*.hpp' -o -name '*.h' -o -name '*.cc' -o -name '*.c' \) \
+          -print | \
         xargs -exec clang-format -Werror --dry-run

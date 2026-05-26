@@ -1,0 +1,187 @@
+From 4c9e1cbd4ec69068c2c18c803abba4933e6e3f94 Mon Sep 17 00:00:00 2001
+From: Marnick Vandecauter <security@marnick.net>
+Date: Sun, 24 May 2026 22:24:45 +0000
+Subject: [PATCH 06/12] F18 cluster: broaden parser exception catches; bound
+ short inputs
+
+Cluster of eleven sub-findings; this patch fixes the six verified
+end-to-end with PoCs (F18, F23, F65, F71, F72, F73). The remaining
+five (F66, F68, F69, F70, F98) are documented in the advisory table
+for maintainer review. ConstructError-only catches in the
+telemetry_parser and image/file receivers let UnicodeDecodeError,
+ValueError, IndexError, and struct.error escape to GR's
+thread-per-block scheduler, which then kills the block thread
+permanently. Empty or short PDUs in usp_ax25_crop, sanosat_deframer,
+and hades_deframer triggered the same death via IndexError /
+struct.error.
+
+Fixes:
+- telemetry_parser: catch Exception, not just ConstructError
+- by70_1 RSSIAdapter: return -inf for rssi=0 instead of log10(0)
+- usp_ax25_crop: drop frames shorter than 4 bytes
+- sanosat_deframer, hades_deframer: drop empty frames
+- filereceiver/by70_1: catch Exception
+- file_receiver: wrap push_chunk dispatch
+
+Reference: audit findings F18, F23, F65, F71, F72, F73 (gr-satellites
+v5.9.0 audit, 2026-05-24)
+CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H = 7.5
+(AC:L because the F23/F72 sub-finding self-triggers on BY70-1's
+RSSI=0 idle frames; no attacker required.)
+
+Other handle_msg definitions in the Python tree may share the
+architectural pattern; this patch covers only the sites with
+end-to-end reproducers.
+
+---
+ python/components/datasinks/file_receiver.py    | 10 +++++++++-
+ python/components/datasinks/telemetry_parser.py |  7 +++++--
+ python/components/deframers/hades_deframer.py   |  3 +++
+ python/components/deframers/sanosat_deframer.py |  4 ++++
+ python/filereceiver/by70_1.py                   |  8 +++++---
+ python/telemetry/by70_1.py                      |  7 +++++++
+ python/usp/usp_ax25_crop.py                     |  5 +++++
+ 7 files changed, 38 insertions(+), 6 deletions(-)
+
+diff --git a/python/components/datasinks/file_receiver.py b/python/components/datasinks/file_receiver.py
+index 6373a33..a79a86b 100644
+--- a/python/components/datasinks/file_receiver.py
++++ b/python/components/datasinks/file_receiver.py
+@@ -62,7 +62,15 @@ class file_receiver(gr.basic_block):
+             return
+         packet = bytes(pmt.u8vector_elements(msg))
+ 
+-        self.receiver.push_chunk(packet)
++        # Audit finding F73: push_chunk dispatches into per-satellite
++        # FileReceiver classes that have their own parsers; any of them
++        # can raise (parse error, short input, missing field, OSError on
++        # full disk). Wrap so the dispatch layer never lets an exception
++        # reach the GR scheduler.
++        try:
++            self.receiver.push_chunk(packet)
++        except Exception as e:
++            print(f'file_receiver: chunk dispatch failed: {e}')
+ 
+     @classmethod
+     def add_options(cls, parser):
+diff --git a/python/components/datasinks/telemetry_parser.py b/python/components/datasinks/telemetry_parser.py
+index 624c2d5..ad7a8c1 100644
+--- a/python/components/datasinks/telemetry_parser.py
++++ b/python/components/datasinks/telemetry_parser.py
+@@ -11,7 +11,6 @@
+ import os
+ import sys
+ 
+-from construct.core import ConstructError
+ from gnuradio import gr
+ import pmt
+ 
+@@ -62,9 +61,13 @@ class telemetry_parser(gr.basic_block):
+             print('-> Packet from', pmt.symbol_to_string(transmitter),
+                   file=self.file)
+ 
++        # Audit finding F18 + F23: the previous catch was ConstructError
++        # only, so a UnicodeDecodeError from PaddedString('ascii') or a
++        # ValueError from a custom adapter (e.g. RSSIAdapter log10(0))
++        # escaped to the scheduler and killed the block thread.
+         try:
+             data = self.format.parse(packet)
+-        except ConstructError as e:
++        except Exception as e:
+             print(f'Could not parse telemetry beacon {e}', file=self.file)
+             return
+         if data:
+diff --git a/python/components/deframers/hades_deframer.py b/python/components/deframers/hades_deframer.py
+index e3769f8..0d60e28 100644
+--- a/python/components/deframers/hades_deframer.py
++++ b/python/components/deframers/hades_deframer.py
+@@ -41,6 +41,9 @@ class hades_packet_crop(gr.basic_block):
+             print('[ERROR] Received invalid message type. Expected u8vector')
+             return
+         packet = bytes(pmt.u8vector_elements(msg))
++        # Audit finding F71: an empty PDU raises IndexError on packet[0].
++        if len(packet) == 0:
++            return
+         packet_type = packet[0] >> 4
+         if self.satellite == 'HADES-D':
+             # https://www.amsat-ea.org/app/download/13595777/AMSAT+EA+-+HADES-D+Transmissions+description.pdf
+diff --git a/python/components/deframers/sanosat_deframer.py b/python/components/deframers/sanosat_deframer.py
+index 9fd31c3..34b8595 100644
+--- a/python/components/deframers/sanosat_deframer.py
++++ b/python/components/deframers/sanosat_deframer.py
+@@ -39,6 +39,10 @@ class sanosat_packet_crop(gr.basic_block):
+             print('[ERROR] Received invalid message type. Expected u8vector')
+             return
+         packet = bytes(pmt.u8vector_elements(msg))
++        # Audit finding F71: an empty PDU raises IndexError on packet[0]
++        # which kills the block thread.
++        if len(packet) == 0:
++            return
+         # 5 bytes consists of 1 byte for lenght field
+         # plus 4 bytes for delimiter FFFF0000
+         packet_length = packet[0] + 5
+diff --git a/python/filereceiver/by70_1.py b/python/filereceiver/by70_1.py
+index bdac74b..22727aa 100644
+--- a/python/filereceiver/by70_1.py
++++ b/python/filereceiver/by70_1.py
+@@ -8,8 +8,6 @@
+ # SPDX-License-Identifier: GPL-3.0-or-later
+ #
+ 
+-from construct.core import ConstructError
+-
+ from .imagereceiver import ImageReceiver
+ from ..telemetry import by70_1 as tlm
+ 
+@@ -19,9 +17,13 @@ class ImageReceiverBY701(ImageReceiver):
+         return f'{fid}.jpg'
+ 
+     def parse_chunk(self, chunk):
++        # Audit finding F72: catch any parse failure (ConstructError,
++        # ValueError from custom adapters like RSSIAdapter, etc.) so the
++        # file-receiver dispatch layer does not propagate the exception
++        # upward into the GR scheduler.
+         try:
+             frame = tlm.parse(chunk)
+-        except ConstructError:
++        except Exception:
+             return None
+         return frame.camera
+ 
+diff --git a/python/telemetry/by70_1.py b/python/telemetry/by70_1.py
+index d321aa4..8518b57 100644
+--- a/python/telemetry/by70_1.py
++++ b/python/telemetry/by70_1.py
+@@ -60,6 +60,13 @@ class RSSIAdapter(Adapter):
+         return int(10**((obj + 147.0)/10.0))
+ 
+     def _decode(self, obj, context, path=None):
++        # Audit finding F23: BY70-1 emits rssi_fm_tc=0 during idle
++        # intervals; log10(0) raises ValueError, which escapes the
++        # construct parser's narrow exception filter and kills the
++        # parser block. Return -inf dB to keep the value semantically
++        # truthful without crashing.
++        if obj <= 0:
++            return float('-inf')
+         return 10*log10(obj) - 147.0
+ 
+ 
+diff --git a/python/usp/usp_ax25_crop.py b/python/usp/usp_ax25_crop.py
+index 1c52c2e..b3a99e4 100644
+--- a/python/usp/usp_ax25_crop.py
++++ b/python/usp/usp_ax25_crop.py
+@@ -40,6 +40,11 @@ class usp_ax25_crop(gr.basic_block):
+             return
+         msg = pmt.u8vector_elements(msg)
+ 
++        # Audit finding F65: a PDU shorter than 4 bytes raises struct.error
++        # which kills the block thread. Drop the frame instead.
++        if len(msg) < 4:
++            return
++
+         length_field = msg[2:4]
+         length = struct.unpack('<H', bytes(length_field))[0]
+ 
+-- 
+2.34.1
+

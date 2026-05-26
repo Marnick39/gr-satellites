@@ -1,0 +1,200 @@
+From 948868303082366f957d0da1c42c3ec3de1e3e08 Mon Sep 17 00:00:00 2001
+From: Marnick Vandecauter <security@marnick.net>
+Date: Sun, 24 May 2026 22:19:53 +0000
+Subject: [PATCH 02/12] F109+F110: bind example flowgraphs to 127.0.0.1 (was
+ wildcard 0.0.0.0 / ::)
+
+12 single-line edits across 11 example .grc files. Operators using
+these examples were inadvertently exposing their KISS TCP server
+(:52001) and UDP IQ ingress (:7355) to the entire LAN, turning
+RF-only bugs in this disclosure (F18 telemetry_parser DoS, F31
+adapter math, etc.) into LAN-reachable defects.
+
+The five qo100 / equisat / nx_decoder UDP examples needed a new
+ipv4_addr: '127.0.0.1' param because network_udp_source defaults
+to 0.0.0.0 when ipv4_addr is omitted. dstar_one exposes the bind
+address as a CLI/GUI parameter ('ip'), so the value of that
+parameter is updated.
+
+Operators who deliberately need LAN reach can edit any single file
+via GRC's GUI.
+
+Reference: audit findings F109 + F110 (gr-satellites v5.9.0 audit, 2026-05-24)
+CVSS:3.1/AV:A/AC:L/PR:N/UI:N/S:U/C:L/I:L/A:L = 6.3
+---
+ examples/ax25/afsk.grc                                         | 2 +-
+ examples/ax25/bpsk.grc                                         | 2 +-
+ examples/ax25/bpsk9k6.grc                                      | 2 +-
+ examples/ax25/fsk.grc                                          | 2 +-
+ .../qo100-multimedia-beacon/qo100_multimedia_beacon_df2et.grc  | 1 +
+ .../qo100-multimedia-beacon/qo100_multimedia_beacon_ea4gpz.grc | 2 +-
+ examples/satellites/equisat.grc                                | 1 +
+ examples/satellites/nx_decoder/amgu_1.grc                      | 1 +
+ examples/satellites/nx_decoder/beesat.grc                      | 1 +
+ examples/satellites/nx_decoder/dstar_one.grc                   | 2 +-
+ examples/satellites/nx_decoder/sokrat.grc                      | 1 +
+ examples/satellites/tanusha3_pm.grc                            | 3 ++-
+ 12 files changed, 13 insertions(+), 7 deletions(-)
+
+diff --git a/examples/ax25/afsk.grc b/examples/ax25/afsk.grc
+index d20646d..5ad8b66 100644
+--- a/examples/ax25/afsk.grc
++++ b/examples/ax25/afsk.grc
+@@ -358,7 +358,7 @@ blocks:
+     affinity: ''
+     alias: ''
+     comment: ''
+-    host: ''
++    host: '127.0.0.1'
+     maxoutbuf: '0'
+     minoutbuf: '0'
+     mtu: '10000'
+diff --git a/examples/ax25/bpsk.grc b/examples/ax25/bpsk.grc
+index ce9a32b..f9db44b 100644
+--- a/examples/ax25/bpsk.grc
++++ b/examples/ax25/bpsk.grc
+@@ -412,7 +412,7 @@ blocks:
+     affinity: ''
+     alias: ''
+     comment: ''
+-    host: ''
++    host: '127.0.0.1'
+     maxoutbuf: '0'
+     minoutbuf: '0'
+     mtu: '10000'
+diff --git a/examples/ax25/bpsk9k6.grc b/examples/ax25/bpsk9k6.grc
+index f8b8b33..ee06ddb 100644
+--- a/examples/ax25/bpsk9k6.grc
++++ b/examples/ax25/bpsk9k6.grc
+@@ -412,7 +412,7 @@ blocks:
+     affinity: ''
+     alias: ''
+     comment: ''
+-    host: ''
++    host: '127.0.0.1'
+     maxoutbuf: '0'
+     minoutbuf: '0'
+     mtu: '10000'
+diff --git a/examples/ax25/fsk.grc b/examples/ax25/fsk.grc
+index da45331..d805ef4 100644
+--- a/examples/ax25/fsk.grc
++++ b/examples/ax25/fsk.grc
+@@ -282,7 +282,7 @@ blocks:
+     affinity: ''
+     alias: ''
+     comment: ''
+-    host: ''
++    host: '127.0.0.1'
+     maxoutbuf: '0'
+     minoutbuf: '0'
+     mtu: '10000'
+diff --git a/examples/qo100-multimedia-beacon/qo100_multimedia_beacon_df2et.grc b/examples/qo100-multimedia-beacon/qo100_multimedia_beacon_df2et.grc
+index 146956b..796578d 100644
+--- a/examples/qo100-multimedia-beacon/qo100_multimedia_beacon_df2et.grc
++++ b/examples/qo100-multimedia-beacon/qo100_multimedia_beacon_df2et.grc
+@@ -884,6 +884,7 @@ blocks:
+     alias: ''
+     comment: ''
+     header: '0'
++    ipv4_addr: '127.0.0.1'
+     ipv6: 'True'
+     maxoutbuf: '0'
+     minoutbuf: '0'
+diff --git a/examples/qo100-multimedia-beacon/qo100_multimedia_beacon_ea4gpz.grc b/examples/qo100-multimedia-beacon/qo100_multimedia_beacon_ea4gpz.grc
+index 408c3da..aed6dde 100644
+--- a/examples/qo100-multimedia-beacon/qo100_multimedia_beacon_ea4gpz.grc
++++ b/examples/qo100-multimedia-beacon/qo100_multimedia_beacon_ea4gpz.grc
+@@ -127,7 +127,7 @@ blocks:
+     alias: ''
+     comment: ''
+     eof: 'False'
+-    ipaddr: 0.0.0.0
++    ipaddr: '127.0.0.1'
+     maxoutbuf: '0'
+     minoutbuf: '0'
+     port: '50100'
+diff --git a/examples/satellites/equisat.grc b/examples/satellites/equisat.grc
+index 5aa8da2..25f0934 100644
+--- a/examples/satellites/equisat.grc
++++ b/examples/satellites/equisat.grc
+@@ -348,6 +348,7 @@ blocks:
+     alias: ''
+     comment: ''
+     header: '0'
++    ipv4_addr: '127.0.0.1'
+     ipv6: 'False'
+     maxoutbuf: '0'
+     minoutbuf: '0'
+diff --git a/examples/satellites/nx_decoder/amgu_1.grc b/examples/satellites/nx_decoder/amgu_1.grc
+index 03242fb..af691a0 100644
+--- a/examples/satellites/nx_decoder/amgu_1.grc
++++ b/examples/satellites/nx_decoder/amgu_1.grc
+@@ -234,6 +234,7 @@ blocks:
+     alias: ''
+     comment: ''
+     header: '0'
++    ipv4_addr: '127.0.0.1'
+     ipv6: 'False'
+     maxoutbuf: '0'
+     minoutbuf: '0'
+diff --git a/examples/satellites/nx_decoder/beesat.grc b/examples/satellites/nx_decoder/beesat.grc
+index 7ee202a..635b46c 100644
+--- a/examples/satellites/nx_decoder/beesat.grc
++++ b/examples/satellites/nx_decoder/beesat.grc
+@@ -234,6 +234,7 @@ blocks:
+     alias: ''
+     comment: ''
+     header: '0'
++    ipv4_addr: '127.0.0.1'
+     ipv6: 'False'
+     maxoutbuf: '0'
+     minoutbuf: '0'
+diff --git a/examples/satellites/nx_decoder/dstar_one.grc b/examples/satellites/nx_decoder/dstar_one.grc
+index d359d6c..bc725cb 100644
+--- a/examples/satellites/nx_decoder/dstar_one.grc
++++ b/examples/satellites/nx_decoder/dstar_one.grc
+@@ -180,7 +180,7 @@ blocks:
+     label: UDP listen IP
+     short_id: ''
+     type: str
+-    value: '::'
++    value: '127.0.0.1'
+   states:
+     bus_sink: false
+     bus_source: false
+diff --git a/examples/satellites/nx_decoder/sokrat.grc b/examples/satellites/nx_decoder/sokrat.grc
+index 422af3a..a03b74c 100644
+--- a/examples/satellites/nx_decoder/sokrat.grc
++++ b/examples/satellites/nx_decoder/sokrat.grc
+@@ -234,6 +234,7 @@ blocks:
+     alias: ''
+     comment: ''
+     header: '0'
++    ipv4_addr: '127.0.0.1'
+     ipv6: 'False'
+     maxoutbuf: '0'
+     minoutbuf: '0'
+diff --git a/examples/satellites/tanusha3_pm.grc b/examples/satellites/tanusha3_pm.grc
+index e080ec2..08ace5a 100644
+--- a/examples/satellites/tanusha3_pm.grc
++++ b/examples/satellites/tanusha3_pm.grc
+@@ -373,7 +373,7 @@ blocks:
+     affinity: ''
+     alias: ''
+     comment: ''
+-    host: ''
++    host: '127.0.0.1'
+     maxoutbuf: '0'
+     minoutbuf: '0'
+     mtu: '10000'
+@@ -394,6 +394,7 @@ blocks:
+     alias: ''
+     comment: ''
+     header: '0'
++    ipv4_addr: '127.0.0.1'
+     ipv6: 'False'
+     maxoutbuf: '0'
+     minoutbuf: '0'
+-- 
+2.34.1
+

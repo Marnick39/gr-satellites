@@ -1,0 +1,93 @@
+From 0dc252e52244e2aeb57d01bb120eab7460660e67 Mon Sep 17 00:00:00 2001
+From: Marnick Vandecauter <security@marnick.net>
+Date: Sun, 24 May 2026 22:21:57 +0000
+Subject: [PATCH 04/12] F10+F12: bound init_u8vector length to source-buffer
+ size
+
+All three call sites trusted an attacker-supplied length field (the
+in-band length byte for cc11xx/sx12xx, or the 16-bit SPINO length
+field) when computing how many bytes pmt.init_u8vector should read
+from the source list. If the field said "more bytes than received,"
+the PMT C-level helper kept reading past the source and shipped
+uninitialized heap content (CPython obmalloc arena) downstream as
+the output PDU.
+
+With submit_tlm: yes default and the AX.25 CRC false-pass rate of
+~1/71k, roughly one such fragment per receiver per ~20 hours of
+operation reaches https://db.satnogs.org/api/telemetry/ , where it
+is stored indefinitely as a public ASLR oracle.
+
+Reference: audit findings F10 + F12 (gr-satellites v5.9.0 audit, 2026-05-24)
+CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N = 5.3
+---
+ python/cc11xx_packet_crop.py                  | 8 +++++++-
+ python/components/deframers/spino_deframer.py | 9 ++++++++-
+ python/sx12xx_packet_crop.py                  | 7 ++++++-
+ 3 files changed, 21 insertions(+), 3 deletions(-)
+
+diff --git a/python/cc11xx_packet_crop.py b/python/cc11xx_packet_crop.py
+index f3923b4..6537029 100644
+--- a/python/cc11xx_packet_crop.py
++++ b/python/cc11xx_packet_crop.py
+@@ -38,7 +38,13 @@ class cc11xx_packet_crop(gr.basic_block):
+         crc_len = 2 if self.crc16 else 0
+         packet_length = packet[0] + 1 + crc_len
+ 
++        # Audit finding F10: refuse to over-read the input buffer.
++        # init_u8vector(N, src) where N > len(src) used to publish
++        # uninitialized heap bytes from the obmalloc arena.
++        if packet_length > len(packet):
++            return
++
+         self.message_port_pub(
+             pmt.intern('out'),
+             pmt.cons(pmt.car(msg_pmt),
+-                     pmt.init_u8vector(packet_length, packet)))
++                     pmt.init_u8vector(packet_length, packet[:packet_length])))
+diff --git a/python/components/deframers/spino_deframer.py b/python/components/deframers/spino_deframer.py
+index c2f096f..b34fe26 100644
+--- a/python/components/deframers/spino_deframer.py
++++ b/python/components/deframers/spino_deframer.py
+@@ -38,12 +38,20 @@ class spino_crop(gr.basic_block):
+             print('[ERROR] Received invalid message type. Expected u8vector')
+             return
+         msg = pmt.u8vector_elements(msg)
++        if len(msg) < 18:
++            return
+         length = struct.unpack('<H', bytes(msg[16:18]))[0]
+         # account for AX.25 headers (14 bytes) and CRC (2 bytes)
+         length += 16
++        # Audit finding F12: refuse to publish more bytes than received,
++        # else init_u8vector reads past the source list and the resulting
++        # PDU leaks uninitialized heap bytes downstream.
++        if length > len(msg):
++            return
+         self.message_port_pub(
+             pmt.intern('out'),
+-            pmt.cons(pmt.car(msg_pmt), pmt.init_u8vector(length, msg)))
++            pmt.cons(pmt.car(msg_pmt),
++                     pmt.init_u8vector(length, msg[:length])))
+ 
+ 
+ _syncword = '00101110111111001001100000100111'
+diff --git a/python/sx12xx_packet_crop.py b/python/sx12xx_packet_crop.py
+index 04d015b..cca7797 100644
+--- a/python/sx12xx_packet_crop.py
++++ b/python/sx12xx_packet_crop.py
+@@ -41,7 +41,12 @@ class sx12xx_packet_crop(gr.basic_block):
+ 
+         packet_length = packet[0] + 1 + self.crc_len
+ 
++        # Audit finding F10: refuse to over-read the input buffer.
++        if packet_length > len(packet):
++            return
++
+         self.message_port_pub(
+             pmt.intern('out'),
+             pmt.cons(pmt.car(msg_pmt),
+-                     pmt.init_u8vector(packet_length, list(packet))))
++                     pmt.init_u8vector(packet_length,
++                                       list(packet[:packet_length]))))
+-- 
+2.34.1
+

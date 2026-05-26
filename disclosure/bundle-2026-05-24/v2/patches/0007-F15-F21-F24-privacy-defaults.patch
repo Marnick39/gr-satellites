@@ -1,0 +1,123 @@
+From e62cf8e308316fd5f5d4b35fbc66b69a714b70f9 Mon Sep 17 00:00:00 2001
+From: Marnick Vandecauter <security@marnick.net>
+Date: Sun, 24 May 2026 22:25:36 +0000
+Subject: [PATCH 07/12] F15+F21+F24: privacy defaults (opt-out by default; fix
+ opt-out paths)
+
+F15: default submit_tlm to 'no' in the freshly-generated config.ini.
+The docs example already shows 'no'; operators following the docs and
+expecting opt-out-by-default got opt-in-by-default. SatNOGS DB stores
+every submitted frame indefinitely; defaulting to opt-in without
+prompting the operator publishes their callsign, coordinates, and
+per-frame RF hex bytes.
+
+F21: keep the numeric latitude/longitude on the submit block so the
+'operator left coordinates at default' guard can actually fire. The
+previous code only stored stringified 'longitude': '0.0E', so the
+comparison 'longitude' == 0.0 was permanently False.
+
+F24: parse GR_SATELLITES_SUBMIT_TLM with configparser's BOOLEAN_STATES
+table (same parser as the config-file path) rather than bool(int(env)).
+The old form crashed on natural values ('no', 'false', 'off') and
+silently enabled submission on any non-zero integer ('-1', '999').
+
+Reference: audit findings F15 + F21 + F24 (gr-satellites v5.9.0 audit, 2026-05-24)
+CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N = 5.3
+---
+ python/core/gr_satellites_flowgraph.py | 19 +++++++++++++++++--
+ python/submit.py                       | 13 ++++++++++---
+ python/utils/config.py                 |  6 +++++-
+ 3 files changed, 32 insertions(+), 6 deletions(-)
+
+diff --git a/python/core/gr_satellites_flowgraph.py b/python/core/gr_satellites_flowgraph.py
+index 04bb5ad..e5865a6 100644
+--- a/python/core/gr_satellites_flowgraph.py
++++ b/python/core/gr_satellites_flowgraph.py
+@@ -9,6 +9,7 @@
+ #
+ 
+ import argparse
++import configparser
+ import functools
+ import itertools
+ import os
+@@ -211,10 +212,24 @@ class gr_satellites_flowgraph(gr.hier_block2):
+ 
+         # The GR_SATELLITES_SUBMIT_TLM environment variable takes precendence
+         # over the configuration to choose whether to enable telemetry
+-        # submission
++        # submission.
++        #
++        # Audit finding F24: the previous implementation used bool(int(env))
++        # which crashed the flowgraph on natural values like 'no', 'false',
++        # 'off' (ValueError from int()), and silently enabled submission on
++        # any non-zero integer like '-1' or '999'. Now uses configparser's
++        # BOOLEAN_STATES, the same parser as the config-file path, so both
++        # paths accept the same set of values.
+         tlm_env = os.environ.get('GR_SATELLITES_SUBMIT_TLM')
+         if tlm_env is not None:
+-            tlm_submit = bool(int(tlm_env))
++            try:
++                tlm_submit = configparser.ConfigParser.BOOLEAN_STATES[
++                    tlm_env.strip().lower()]
++            except KeyError:
++                raise ValueError(
++                    f"GR_SATELLITES_SUBMIT_TLM={tlm_env!r} is not a "
++                    "recognised boolean. Use one of: "
++                    f"{sorted(configparser.ConfigParser.BOOLEAN_STATES)}")
+         else:
+             tlm_submit = self.config.getboolean('Groundstation', 'submit_tlm')
+         if tlm_submit:
+diff --git a/python/submit.py b/python/submit.py
+index a6b8b6e..7134e84 100644
+--- a/python/submit.py
++++ b/python/submit.py
+@@ -79,6 +79,12 @@ class submit(gr.basic_block):
+             out_sig=[])
+ 
+         self.url = url
++        # Audit finding F21: keep the numeric lat/lon separately so we can
++        # actually compare them to 0 below. The previous code only stored
++        # the stringified versions ('0.0E' / '0.0N'), making the
++        # "operator left coordinates at default" guard always false.
++        self._latitude = float(latitude)
++        self._longitude = float(longitude)
+         self.request = {
+             'noradID': noradID,
+             'source': source,
+@@ -98,11 +104,12 @@ class submit(gr.basic_block):
+         self.set_msg_handler(pmt.intern('in'), self.handle_msg)
+ 
+     def handle_msg(self, msg_pmt):
+-        # Check that callsign and QTH have been entered
++        # Check that callsign and QTH have been entered. Operators leaving
++        # their coordinates at the default are explicitly opting out of
++        # publishing their station location.
+         if self.request['source'] == '':
+             return
+-        if (self.request['longitude'] == 0.0
+-                and self.request['latitude'] == 0.0):
++        if self._longitude == 0.0 and self._latitude == 0.0:
+             return
+ 
+         msg = pmt.cdr(msg_pmt)
+diff --git a/python/utils/config.py b/python/utils/config.py
+index 94d824b..609b3b2 100644
+--- a/python/utils/config.py
++++ b/python/utils/config.py
+@@ -45,7 +45,11 @@ def write_default_config(file):
+         'callsign': '',
+         'latitude': 0,
+         'longitude': 0,
+-        'submit_tlm': 'yes',
++        # Audit finding F15: default 'no' — opt in explicitly rather than
++        # exporting the operator's coordinates and frame contents to the
++        # public SatNOGS DB without their knowledge. The example value
++        # in docs/source/command_line.rst already shows 'no'.
++        'submit_tlm': 'no',
+     }
+ 
+     config['FUNcube'] = {
+-- 
+2.34.1
+

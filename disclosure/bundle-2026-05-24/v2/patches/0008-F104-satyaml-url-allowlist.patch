@@ -1,0 +1,104 @@
+From 56af5d7c75d2dee64e610ac6b6c45876abb33c92 Mon Sep 17 00:00:00 2001
+From: Marnick Vandecauter <security@marnick.net>
+Date: Sun, 24 May 2026 22:26:32 +0000
+Subject: [PATCH 08/12] F104: validate SIDS URL scheme at SatYAML load +
+ defense-in-depth in submit
+
+A SatYAML 'telemetry_servers: SIDS <url>' entry historically accepted
+any URL string, and submit.py's urllib.request.urlopen() handles
+file://, ftp://, data:, http://10.*, http://127.* by default. An
+operator who loaded a malicious .yml file (from a mailing list,
+community wiki, 'support for satellite X' PR) silently POSTed their
+own callsign, coordinates, and per-frame RF hex bytes to whatever
+URL the YAML author chose.
+
+Two changes:
+
+1. satyaml.py load-time validation rejects any SIDS URL that isn't
+   http:// or https://. Fail-closed surfaces the problem obviously
+   rather than silently SSRF-ing on every frame.
+2. submit.py refuses to POST to non-http(s) URLs at request time, as
+   defence-in-depth against a future loader bypass.
+
+Plus a warning paragraph at the top of docs/source/satyaml.rst telling
+operators only to load YAML from trusted sources.
+
+Reference: audit finding F104 (gr-satellites v5.9.0 audit, 2026-05-24)
+CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:L/I:N/A:N = 4.3
+---
+ docs/source/satyaml.rst   |  9 +++++++++
+ python/satyaml/satyaml.py | 18 ++++++++++++++++++
+ python/submit.py          |  8 ++++++++
+ 3 files changed, 35 insertions(+)
+
+diff --git a/docs/source/satyaml.rst b/docs/source/satyaml.rst
+index b5fcc16..a4b0d2e 100644
+--- a/docs/source/satyaml.rst
++++ b/docs/source/satyaml.rst
+@@ -10,6 +10,15 @@ components. Using SatYAML files, the ``gr_satellites`` command line tool and the
+ Satellite decoder block can figure out which components to put together to
+ decode a particular satellite.
+ 
++.. warning::
++
++   Only load SatYAML files from sources you trust. A ``telemetry_servers:
++   SIDS <url>`` entry directs ``gr-satellites`` to POST every received frame
++   (callsign, station coordinates, RF hex bytes) to the listed URL.
++   ``gr-satellites`` enforces ``http://`` / ``https://`` schemes at YAML
++   load time, but otherwise the URL itself is operator-supplied
++   configuration and is not validated against an allow-list.
++
+ 
+ SatYAML files are stored in the ``python/satyaml`` directory. Below we show the
+ SatYAML file ``1KUNS-PF.yml`` to give an overall idea of the format of these
+diff --git a/python/satyaml/satyaml.py b/python/satyaml/satyaml.py
+index d7530d1..428c634 100644
+--- a/python/satyaml/satyaml.py
++++ b/python/satyaml/satyaml.py
+@@ -72,6 +72,24 @@ class SatYAML:
+                         and not server.startswith('HIT ')
+                         and not server.startswith('SIDS ')):
+                     raise YAMLError(f'Unknown telemetry server {server}')
++                # Audit finding F104: a SIDS entry historically accepted
++                # any URL, including file://, ftp://, data:, http://10.* and
++                # http://127.* — operators loading a malicious community
++                # YAML silently POSTed their telemetry to whatever URL the
++                # author chose. Refuse anything that isn't http(s) at YAML
++                # load time so the failure surfaces obviously rather than
++                # silently on every frame.
++                if server.startswith('SIDS '):
++                    parts = server.split(None, 1)
++                    if len(parts) != 2:
++                        raise YAMLError(
++                            f'SIDS server requires a URL: {server!r}')
++                    sids_url = parts[1]
++                    if not (sids_url.startswith('http://')
++                            or sids_url.startswith('https://')):
++                        raise YAMLError(
++                            f'SIDS URL must be http:// or https://, '
++                            f'got: {sids_url!r}')
+         if 'data' not in d:
+             raise YAMLError(f'Missing data field in {yml}')
+         if 'transports' in d:
+diff --git a/python/submit.py b/python/submit.py
+index 7134e84..36b5134 100644
+--- a/python/submit.py
++++ b/python/submit.py
+@@ -127,6 +127,14 @@ class submit(gr.basic_block):
+         self.request['timestamp'] = t_prop_fmt
+ 
+         params = urllib.parse.urlencode(self.request)
++        # Audit finding F104: defence-in-depth against a malicious SatYAML
++        # that bypassed the loader's scheme check. urlopen() handles
++        # file://, ftp://, data: by default; reject anything that isn't
++        # http(s) before the request goes out.
++        if not (self.url.startswith('http://')
++                or self.url.startswith('https://')):
++            print('Refusing to submit to non-http(s) URL:', self.url)
++            return
+         # Audit finding F22c: previously, only urlopen() was wrapped; the
+         # subsequent f.read() / f.getcode() / f.close() could still raise
+         # on a half-closed stream and kill the block thread. Bound the
+-- 
+2.34.1
+

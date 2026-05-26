@@ -1,0 +1,50 @@
+From 4910c865abb09c6e90f91dffc68f7fbeeb84ff1c Mon Sep 17 00:00:00 2001
+From: Marnick Vandecauter <security@marnick.net>
+Date: Sun, 24 May 2026 22:28:07 +0000
+Subject: [PATCH 10/12] F101 (hygiene): clear KISS packet buffer in place
+ across FEND
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+When a CCSDS TM frame contains two or more KISS FEND delimiters, the
+code published the first packet correctly, then did
+self.packets[vc] = [] which rebound the dict entry to a fresh list.
+The local 'packet' variable still pointed at the now-published list,
+so bytes between the second FEND and the next publication landed on
+the orphan instead of the fresh buffer; the next FEND then published
+the orphan's residue.
+
+Net effect: operators decoding ASRTU-1 saw a stale APID-200 beacon
+value (temperature, etc.) for one frame after every multi-packet TM.
+Real bug but the impact is one stale dashboard value per multi-FEND
+frame, not security-significant in any deployed scenario — hygiene
+patch, no CVE filed.
+
+Reference: audit finding F101 (gr-satellites v5.9.0 audit, 2026-05-24)
+---
+ python/components/transports/tm_kiss_transport.py | 8 +++++++-
+ 1 file changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/python/components/transports/tm_kiss_transport.py b/python/components/transports/tm_kiss_transport.py
+index c69aee7..01c519e 100644
+--- a/python/components/transports/tm_kiss_transport.py
++++ b/python/components/transports/tm_kiss_transport.py
+@@ -64,7 +64,13 @@ class tm_kiss_transport(gr.basic_block):
+                         pmt.intern('out'),
+                         pmt.cons(pmt.PMT_NIL,
+                                  pmt.init_u8vector(len(packet), packet)))
+-                    self.packets[vc] = []
++                    # Audit finding F101: clear the buffer in place rather
++                    # than rebinding the dict entry to a new list. The old
++                    # code did self.packets[vc] = [], which left `packet`
++                    # pointing at the published list; bytes between the
++                    # next FEND and the publication landed on the orphan
++                    # instead of the fresh buffer.
++                    packet.clear()
+             elif self.transpose[vc]:
+                 if c == TFEND:
+                     packet.append(FEND)
+-- 
+2.34.1
+
