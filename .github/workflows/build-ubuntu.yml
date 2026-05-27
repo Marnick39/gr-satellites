@@ -13,4 +13,9 @@ jobs:
     steps:
       # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
       - uses: actions/checkout@v4
-      - uses: daniestevez/gr-satellites-ci-action@v2.1.0
+      # Pin third-party actions by commit SHA, not by tag, so a future
+      # tag move (intentional or compromised) cannot silently replace
+      # the CI workflow that runs against every PR. The comment after
+      # the SHA preserves the human-readable version. Verify with
+      # `gh api repos/daniestevez/gr-satellites-ci-action/git/refs/tags/v2.1.0`.
+      - uses: daniestevez/gr-satellites-ci-action@e9aa8f8569301c797dcaffb3a99f25c00ed3d0d3  # v2.1.0

@@ -71,6 +71,26 @@ if((CMAKE_CXX_COMPILER_ID MATCHES "Clang" OR
     add_definitions(-fvisibility=hidden)
 endif()
 
+########################################################################
+# Hardening flags (Linux/BSD source builds).
+#
+# Distros that build via dpkg-buildflags / rpm %optflags already inject
+# these; this block protects operators who do a plain `cmake .. && make`
+# in a fresh checkout. The flags are well-supported on GCC and Clang
+# back to the GR 3.10 / GCC 9 baseline and are no-ops on older
+# toolchains that silently ignore unknown options. -fPIE deliberately
+# omitted: gr-satellites ships as a shared library and PIE objects
+# cannot link into a .so output.
+########################################################################
+if(UNIX AND NOT APPLE)
+    add_compile_options(
+        -D_FORTIFY_SOURCE=2
+        -fstack-protector-strong)
+    add_link_options(
+        -Wl,-z,relro
+        -Wl,-z,now)
+endif()
+
 SET(CMAKE_CXX_STANDARD 17)
 SET(CMAKE_C_STANDARD 11)
 

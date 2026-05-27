@@ -64,7 +64,13 @@ class tm_kiss_transport(gr.basic_block):
                         pmt.intern('out'),
                         pmt.cons(pmt.PMT_NIL,
                                  pmt.init_u8vector(len(packet), packet)))
-                    self.packets[vc] = []
+                    # Audit finding F101: clear the buffer in place rather
+                    # than rebinding the dict entry to a new list. The old
+                    # code did self.packets[vc] = [], which left `packet`
+                    # pointing at the published list; bytes between the
+                    # next FEND and the publication landed on the orphan
+                    # instead of the fresh buffer.
+                    packet.clear()
             elif self.transpose[vc]:
                 if c == TFEND:
                     packet.append(FEND)
