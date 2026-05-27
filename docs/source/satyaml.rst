@@ -10,6 +10,15 @@ components. Using SatYAML files, the ``gr_satellites`` command line tool and the
 Satellite decoder block can figure out which components to put together to
 decode a particular satellite.
 
+.. warning::
+
+   Only load SatYAML files from sources you trust. A ``telemetry_servers:
+   SIDS <url>`` entry directs ``gr-satellites`` to POST every received frame
+   (callsign, station coordinates, RF hex bytes) to the listed URL.
+   ``gr-satellites`` enforces ``http://`` / ``https://`` schemes at YAML
+   load time, but otherwise the URL itself is operator-supplied
+   configuration and is not validated against an allow-list.
+
 
 SatYAML files are stored in the ``python/satyaml`` directory. Below we show the
 SatYAML file ``1KUNS-PF.yml`` to give an overall idea of the format of these

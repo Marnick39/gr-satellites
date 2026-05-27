@@ -180,7 +180,7 @@ blocks:
     label: UDP listen IP
     short_id: ''
     type: str
-    value: '::'
+    value: '127.0.0.1'
   states:
     bus_sink: false
     bus_source: false

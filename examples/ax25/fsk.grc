@@ -282,7 +282,7 @@ blocks:
     affinity: ''
     alias: ''
     comment: ''
-    host: ''
+    host: '127.0.0.1'
     maxoutbuf: '0'
     minoutbuf: '0'
     mtu: '10000'

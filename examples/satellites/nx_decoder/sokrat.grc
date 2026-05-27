@@ -234,6 +234,7 @@ blocks:
     alias: ''
     comment: ''
     header: '0'
+    ipv4_addr: '127.0.0.1'
     ipv6: 'False'
     maxoutbuf: '0'
     minoutbuf: '0'

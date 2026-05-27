@@ -9,6 +9,7 @@
 #
 
 import argparse
+import configparser
 import functools
 import itertools
 import os
@@ -211,10 +212,24 @@ class gr_satellites_flowgraph(gr.hier_block2):
 
         # The GR_SATELLITES_SUBMIT_TLM environment variable takes precendence
         # over the configuration to choose whether to enable telemetry
-        # submission
+        # submission.
+        #
+        # Audit finding F24: the previous implementation used bool(int(env))
+        # which crashed the flowgraph on natural values like 'no', 'false',
+        # 'off' (ValueError from int()), and silently enabled submission on
+        # any non-zero integer like '-1' or '999'. Now uses configparser's
+        # BOOLEAN_STATES, the same parser as the config-file path, so both
+        # paths accept the same set of values.
         tlm_env = os.environ.get('GR_SATELLITES_SUBMIT_TLM')
         if tlm_env is not None:
-            tlm_submit = bool(int(tlm_env))
+            try:
+                tlm_submit = configparser.ConfigParser.BOOLEAN_STATES[
+                    tlm_env.strip().lower()]
+            except KeyError:
+                raise ValueError(
+                    f"GR_SATELLITES_SUBMIT_TLM={tlm_env!r} is not a "
+                    "recognised boolean. Use one of: "
+                    f"{sorted(configparser.ConfigParser.BOOLEAN_STATES)}")
         else:
             tlm_submit = self.config.getboolean('Groundstation', 'submit_tlm')
         if tlm_submit:

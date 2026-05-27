@@ -72,6 +72,24 @@ class SatYAML:
                         and not server.startswith('HIT ')
                         and not server.startswith('SIDS ')):
                     raise YAMLError(f'Unknown telemetry server {server}')
+                # Audit finding F104: a SIDS entry historically accepted
+                # any URL, including file://, ftp://, data:, http://10.* and
+                # http://127.* — operators loading a malicious community
+                # YAML silently POSTed their telemetry to whatever URL the
+                # author chose. Refuse anything that isn't http(s) at YAML
+                # load time so the failure surfaces obviously rather than
+                # silently on every frame.
+                if server.startswith('SIDS '):
+                    parts = server.split(None, 1)
+                    if len(parts) != 2:
+                        raise YAMLError(
+                            f'SIDS server requires a URL: {server!r}')
+                    sids_url = parts[1]
+                    if not (sids_url.startswith('http://')
+                            or sids_url.startswith('https://')):
+                        raise YAMLError(
+                            f'SIDS URL must be http:// or https://, '
+                            f'got: {sids_url!r}')
         if 'data' not in d:
             raise YAMLError(f'Missing data field in {yml}')
         if 'transports' in d:

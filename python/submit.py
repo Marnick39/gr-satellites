@@ -79,6 +79,12 @@ class submit(gr.basic_block):
             out_sig=[])
 
         self.url = url
+        # Audit finding F21: keep the numeric lat/lon separately so we can
+        # actually compare them to 0 below. The previous code only stored
+        # the stringified versions ('0.0E' / '0.0N'), making the
+        # "operator left coordinates at default" guard always false.
+        self._latitude = float(latitude)
+        self._longitude = float(longitude)
         self.request = {
             'noradID': noradID,
             'source': source,
@@ -98,11 +104,12 @@ class submit(gr.basic_block):
         self.set_msg_handler(pmt.intern('in'), self.handle_msg)
 
     def handle_msg(self, msg_pmt):
-        # Check that callsign and QTH have been entered
+        # Check that callsign and QTH have been entered. Operators leaving
+        # their coordinates at the default are explicitly opting out of
+        # publishing their station location.
         if self.request['source'] == '':
             return
-        if (self.request['longitude'] == 0.0
-                and self.request['latitude'] == 0.0):
+        if self._longitude == 0.0 and self._latitude == 0.0:
             return
 
         msg = pmt.cdr(msg_pmt)
@@ -120,21 +127,37 @@ class submit(gr.basic_block):
         self.request['timestamp'] = t_prop_fmt
 
         params = urllib.parse.urlencode(self.request)
+        # Audit finding F104: defence-in-depth against a malicious SatYAML
+        # that bypassed the loader's scheme check. urlopen() handles
+        # file://, ftp://, data: by default; reject anything that isn't
+        # http(s) before the request goes out.
+        if not (self.url.startswith('http://')
+                or self.url.startswith('https://')):
+            print('Refusing to submit to non-http(s) URL:', self.url)
+            return
+        # Audit finding F22c: previously, only urlopen() was wrapped; the
+        # subsequent f.read() / f.getcode() / f.close() could still raise
+        # on a half-closed stream and kill the block thread. Bound the
+        # whole I/O sequence and add timeout= so a stalled server cannot
+        # block the handler indefinitely.
         try:
             f = urllib.request.urlopen(
                 '{}?{}'.format(self.url, params),
-                data=bytes(params, encoding='ascii'))
+                data=bytes(params, encoding='ascii'),
+                timeout=10)
+            try:
+                reply = f.read()
+                code = f.getcode()
+                if code < 200 or code >= 300:
+                    print('Server error while submitting telemetry')
+                    print('Reply:')
+                    print(reply)
+                    print('URL:', f.geturl())
+                    print('HTTP code:', f.getcode())
+                    print('Info:')
+                    print(f.info())
+            finally:
+                f.close()
         except Exception as e:
             print('Error while submitting telemetry:', e)
             return
-        reply = f.read()
-        code = f.getcode()
-        if code < 200 or code >= 300:
-            print('Server error while submitting telemetry')
-            print('Reply:')
-            print(reply)
-            print('URL:', f.geturl())
-            print('HTTP code:', f.getcode())
-            print('Info:')
-            print(f.info())
-        f.close()
