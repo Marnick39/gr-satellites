@@ -41,7 +41,12 @@ class sx12xx_packet_crop(gr.basic_block):
 
         packet_length = packet[0] + 1 + self.crc_len
 
+        # Audit finding F10: refuse to over-read the input buffer.
+        if packet_length > len(packet):
+            return
+
         self.message_port_pub(
             pmt.intern('out'),
             pmt.cons(pmt.car(msg_pmt),
-                     pmt.init_u8vector(packet_length, list(packet))))
+                     pmt.init_u8vector(packet_length,
+                                       list(packet[:packet_length]))))

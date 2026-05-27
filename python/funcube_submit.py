@@ -55,8 +55,17 @@ class funcube_submit(gr.basic_block):
 
         url = (self.base_url + '/api/data/hex/'
                + self.site_id + '/?digest=' + self.digest(frame))
-        r = requests.post(url, data=frame,
-                          headers={'Content-Type': 'application/text'})
+        # Audit finding F22a: wrap network I/O so a transient failure
+        # (DNS, TCP RST, TLS handshake error, slow server) does not kill
+        # the GR scheduler thread for this block. timeout=10 prevents an
+        # unresponsive warehouse from stalling the handler indefinitely.
+        try:
+            r = requests.post(url, data=frame,
+                              headers={'Content-Type': 'application/text'},
+                              timeout=10)
+        except Exception as e:
+            print('FUNcube submission failed:', e)
+            return
         if r.status_code != 200:
             print('FUNcube server error while submitting telemetry')
             print('Reply:', r.text)

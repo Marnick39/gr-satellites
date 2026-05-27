@@ -39,6 +39,10 @@ class sanosat_packet_crop(gr.basic_block):
             print('[ERROR] Received invalid message type. Expected u8vector')
             return
         packet = bytes(pmt.u8vector_elements(msg))
+        # Audit finding F71: an empty PDU raises IndexError on packet[0]
+        # which kills the block thread.
+        if len(packet) == 0:
+            return
         # 5 bytes consists of 1 byte for lenght field
         # plus 4 bytes for delimiter FFFF0000
         packet_length = packet[0] + 5

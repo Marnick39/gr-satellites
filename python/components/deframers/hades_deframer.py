@@ -41,6 +41,9 @@ class hades_packet_crop(gr.basic_block):
             print('[ERROR] Received invalid message type. Expected u8vector')
             return
         packet = bytes(pmt.u8vector_elements(msg))
+        # Audit finding F71: an empty PDU raises IndexError on packet[0].
+        if len(packet) == 0:
+            return
         packet_type = packet[0] >> 4
         if self.satellite == 'HADES-D':
             # https://www.amsat-ea.org/app/download/13595777/AMSAT+EA+-+HADES-D+Transmissions+description.pdf

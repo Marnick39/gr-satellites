@@ -80,9 +80,15 @@ class pwsat2_submitter(gr.basic_block):
             return
 
         url = self.baseUrl+'/api/authenticate'
-        response = self.requests.post(url,
-                                      data=json.dumps(credentials),
-                                      headers=self.headers)
+        try:
+            response = self.requests.post(url,
+                                          data=json.dumps(credentials),
+                                          headers=self.headers,
+                                          timeout=10)
+        except Exception as e:
+            print('Could not authenticate to PW-Sat2 server:', e)
+            self.cookies = None
+            return
         if response.status_code == 200:
             self.cookies = response.cookies
         else:
@@ -109,10 +115,15 @@ class pwsat2_submitter(gr.basic_block):
                    'timestamp': timestamp,
                    'traffic': 'Rx'}
 
-        response = self.requests.put(url,
-                                     data=json.dumps(payload),
-                                     headers=self.headers,
-                                     cookies=self.cookies)
+        try:
+            response = self.requests.put(url,
+                                         data=json.dumps(payload),
+                                         headers=self.headers,
+                                         cookies=self.cookies,
+                                         timeout=10)
+        except Exception as e:
+            print('PW-Sat2 packet upload failed:', e)
+            return None
         return response.text
 
     def handle_msg(self, msg_pmt):

@@ -25,10 +25,13 @@ class bme_ws_submitter(gr.basic_block):
             in_sig=[],
             out_sig=[])
 
+        # Audit finding F36: bound the connect attempt so an unresponsive
+        # server does not stall block construction (and, downstream, the
+        # entire flowgraph start) indefinitely. Same for per-send I/O.
         self.ws = websocket.WebSocket()
         url = 'wss://gnd.bme.hu:8070/send'
         try:
-            self.ws.connect(url)
+            self.ws.connect(url, timeout=10)
         except Exception:
             print(f'could not connect to {url}; '
                   'disabling telemetry submission')
@@ -45,6 +48,9 @@ class bme_ws_submitter(gr.basic_block):
         if self.ws is None:
             return
         data = f'"data": "{frame.hex().upper()}"'
+        # Bound each per-frame round-trip; previous behaviour blocked
+        # indefinitely on a stalled server.
+        self.ws.settimeout(10)
         self.ws.send(data)
         response = self.ws.recv()
         response = json.loads('{' + response + '}')

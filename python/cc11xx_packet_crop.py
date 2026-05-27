@@ -38,7 +38,13 @@ class cc11xx_packet_crop(gr.basic_block):
         crc_len = 2 if self.crc16 else 0
         packet_length = packet[0] + 1 + crc_len
 
+        # Audit finding F10: refuse to over-read the input buffer.
+        # init_u8vector(N, src) where N > len(src) used to publish
+        # uninitialized heap bytes from the obmalloc arena.
+        if packet_length > len(packet):
+            return
+
         self.message_port_pub(
             pmt.intern('out'),
             pmt.cons(pmt.car(msg_pmt),
-                     pmt.init_u8vector(packet_length, packet)))
+                     pmt.init_u8vector(packet_length, packet[:packet_length])))

@@ -11,7 +11,6 @@
 import os
 import sys
 
-from construct.core import ConstructError
 from gnuradio import gr
 import pmt
 
@@ -62,9 +61,13 @@ class telemetry_parser(gr.basic_block):
             print('-> Packet from', pmt.symbol_to_string(transmitter),
                   file=self.file)
 
+        # Audit finding F18 + F23: the previous catch was ConstructError
+        # only, so a UnicodeDecodeError from PaddedString('ascii') or a
+        # ValueError from a custom adapter (e.g. RSSIAdapter log10(0))
+        # escaped to the scheduler and killed the block thread.
         try:
             data = self.format.parse(packet)
-        except ConstructError as e:
+        except Exception as e:
             print(f'Could not parse telemetry beacon {e}', file=self.file)
             return
         if data:

@@ -38,12 +38,20 @@ class spino_crop(gr.basic_block):
             print('[ERROR] Received invalid message type. Expected u8vector')
             return
         msg = pmt.u8vector_elements(msg)
+        if len(msg) < 18:
+            return
         length = struct.unpack('<H', bytes(msg[16:18]))[0]
         # account for AX.25 headers (14 bytes) and CRC (2 bytes)
         length += 16
+        # Audit finding F12: refuse to publish more bytes than received,
+        # else init_u8vector reads past the source list and the resulting
+        # PDU leaks uninitialized heap bytes downstream.
+        if length > len(msg):
+            return
         self.message_port_pub(
             pmt.intern('out'),
-            pmt.cons(pmt.car(msg_pmt), pmt.init_u8vector(length, msg)))
+            pmt.cons(pmt.car(msg_pmt),
+                     pmt.init_u8vector(length, msg[:length])))
 
 
 _syncword = '00101110111111001001100000100111'

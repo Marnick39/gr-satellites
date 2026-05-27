@@ -62,7 +62,15 @@ class file_receiver(gr.basic_block):
             return
         packet = bytes(pmt.u8vector_elements(msg))
 
-        self.receiver.push_chunk(packet)
+        # Audit finding F73: push_chunk dispatches into per-satellite
+        # FileReceiver classes that have their own parsers; any of them
+        # can raise (parse error, short input, missing field, OSError on
+        # full disk). Wrap so the dispatch layer never lets an exception
+        # reach the GR scheduler.
+        try:
+            self.receiver.push_chunk(packet)
+        except Exception as e:
+            print(f'file_receiver: chunk dispatch failed: {e}')
 
     @classmethod
     def add_options(cls, parser):

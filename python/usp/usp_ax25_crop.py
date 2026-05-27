@@ -40,6 +40,11 @@ class usp_ax25_crop(gr.basic_block):
             return
         msg = pmt.u8vector_elements(msg)
 
+        # Audit finding F65: a PDU shorter than 4 bytes raises struct.error
+        # which kills the block thread. Drop the frame instead.
+        if len(msg) < 4:
+            return
+
         length_field = msg[2:4]
         length = struct.unpack('<H', bytes(length_field))[0]
 

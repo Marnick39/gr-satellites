@@ -45,12 +45,16 @@ class bme_submitter(gr.basic_block):
             print(f'Authentication failed: {e}')
             return
         if rauth.status_code == 200:
-            # We hit the jackpot.
-            # Let's use the token obtained in the authentication header.
-            auth_resp = rauth.json()
-            # The token is valid for 60 minutes.
-            # After 45 a new one can be requested.
-            self.auth_token = auth_resp['token']
+            # Audit findings F33, F34: an unexpected response body (HTML
+            # error page from a proxy, missing 'token' field after an API
+            # change) used to raise ValueError / KeyError out of the GR
+            # handler and kill the block thread.
+            try:
+                auth_resp = rauth.json()
+                self.auth_token = auth_resp['token']
+            except (ValueError, KeyError) as e:
+                print(f'BME authentication response parse failed: {e}')
+                return
         elif rauth.status_code == 401:
             # Unauthorized (wrong credentials)
             print('Wrong credentials, have you registered at'
@@ -65,17 +69,28 @@ class bme_submitter(gr.basic_block):
         packets = [{'satellite': self.satellite,
                     'packet': frame.hex().upper()}]
         auth_header = {'Authorization': 'Bearer ' + self.auth_token}
-        rpacket = requests.post(
-            'https://gnd.bme.hu:8080/api/packets/bulk',
-            json={'packets': packets}, headers=auth_header, timeout=10)
-        packet_resp = rpacket.json()
-        if rpacket.status_code == 200:
-            uploaded_packets = packet_resp["results"]
-            for p in uploaded_packets:
-                if 'error' in p:
-                    print('Checksum error')
-        else:
+        # Audit findings F20, F35: wrap the network call and the JSON
+        # parse so a network failure or unexpected response shape does
+        # not kill the GR handler thread.
+        try:
+            rpacket = requests.post(
+                'https://gnd.bme.hu:8080/api/packets/bulk',
+                json={'packets': packets}, headers=auth_header, timeout=10)
+        except Exception as e:
+            print(f'BME packet upload failed: {e}')
+            return
+        if rpacket.status_code != 200:
             print('Packet upload failed, token might have expired!')
+            return
+        try:
+            packet_resp = rpacket.json()
+            uploaded_packets = packet_resp['results']
+        except (ValueError, KeyError) as e:
+            print(f'BME packet response parse failed: {e}')
+            return
+        for p in uploaded_packets:
+            if 'error' in p:
+                print('Checksum error')
 
     def handle_msg(self, msg_pmt):
         msg = pmt.cdr(msg_pmt)

@@ -60,6 +60,13 @@ class RSSIAdapter(Adapter):
         return int(10**((obj + 147.0)/10.0))
 
     def _decode(self, obj, context, path=None):
+        # Audit finding F23: BY70-1 emits rssi_fm_tc=0 during idle
+        # intervals; log10(0) raises ValueError, which escapes the
+        # construct parser's narrow exception filter and kills the
+        # parser block. Return -inf dB to keep the value semantically
+        # truthful without crashing.
+        if obj <= 0:
+            return float('-inf')
         return 10*log10(obj) - 147.0
 
 
