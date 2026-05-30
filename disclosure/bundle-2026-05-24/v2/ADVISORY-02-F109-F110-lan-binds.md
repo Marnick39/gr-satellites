@@ -28,9 +28,7 @@ src/examples/qo100-multimedia-beacon/qo100_multimedia_beacon_ea4gpz.grc:130
 src/examples/satellites/nx_decoder/dstar_one.grc:184
 src/examples/satellites/equisat.grc:344
 src/examples/satellites/tanusha3_pm.grc:390
-src/examples/satellites/nx_decoder/sokrat.grc:230
 src/examples/satellites/nx_decoder/beesat.grc:230
-src/examples/satellites/nx_decoder/amgu_1.grc:230
 src/examples/qo100-multimedia-beacon/qo100_multimedia_beacon_df2et.grc:880
 ```
 
