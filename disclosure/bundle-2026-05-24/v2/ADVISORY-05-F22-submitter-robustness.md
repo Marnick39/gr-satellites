@@ -1,19 +1,23 @@
 # Advisory 5 — Unhandled network exceptions in telemetry submitters kill the GR scheduler thread
 
-CVSS 3.1: `AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H` = **7.5 High**
+CVSS 3.1: `AV:A/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H` = **6.5 Medium**
 CWE: CWE-755 (improper exception handling)
 Affected: gr-satellites `>= 1.0.0, <= 5.9.0`
 Audit reference: F22a + F22b + F22c + F20 + F33 + F34 + F35 + F36 (eight sites, one fix)
 
-## Why AC:L
+## Attacker model (AV:A / AC:L / A:H)
 
-The BME warehouse path self-triggers on every flowgraph start: `gnd.bme.hu:8080` completes the TLS handshake and then closes the stream on anonymous connections, raising `ConnectionError` on the first frame. No attacker action required.
+The vulnerable component is the submitter on the operator's machine. The realistic attacker is network-adjacent — on the operator's LAN or local network path (a compromised home router, a hostile device on the same segment) — and can interfere with the outbound submission (AV:A). The failure follows from a single network exception on that path, so the attacker induces it deterministically with one RST or connection reset (AC:L): no race, no timing window, no privileges, no operator interaction. The availability impact is High: publishing telemetry is the function the operator runs `submit_tlm` for, and the bug takes it down completely and persistently — the decode chain keeps running, but the thing this component exists to do, submit, stops for the rest of the process (A:H). What makes this a security issue rather than ordinary disruption is persistence: a network-adjacent attacker could block submissions only while present, and that is self-healing; here a single momentary action leaves the station permanently and silently offline after the attacker withdraws.
+
+It also occurs with no attacker at all: `gnd.bme.hu:8080` completes the TLS handshake then closes the stream on anonymous connections, raising `ConnectionError` on the first frame of every flowgraph start. That makes it a live reliability issue as well as a security one — but the security scoring rests on the deliberate adjacent-attacker case above, not on the self-trigger.
+
+Because every station submits to the same few telemetry servers, a disruption of that shared infrastructure could strand many submitters at once; that depends on impacting third-party infrastructure outside the project, so it is a non-scored amplifier rather than part of the base CVSS.
 
 ## What happens
 
 Each of the telemetry-submitter blocks wraps a network call (`requests.post`, `requests.put`, `urlopen`, `WebSocket.send`) inside the GNU Radio `handle_msg` entry point without a `try/except` clause. GNU Radio's thread-per-block scheduler catches uncaught exceptions only at the very top of the thread function; once caught, the thread exits and is not respawned. The block's input queue keeps accepting messages — they just stay queued and never get processed.
 
-When the operator's network has any transient failure (DNS timeout, TCP RST from the warehouse, TLS handshake failure, slow server, network change), the submitter's `requests.post()` raises a Python exception, the handler thread dies, and every subsequent telemetry submission is silently dropped. The flowgraph keeps running so there's no visible error; the operator believes they're uploading but the queue is being discarded.
+When the operator's network has any transient failure (DNS timeout, TCP RST from the warehouse, TLS handshake failure, slow server, network change), the submitter's `requests.post()` raises a Python exception, the handler thread dies, and every subsequent telemetry submission is silently dropped. GNU Radio logs a single error line as the thread dies, but nothing afterward; the flowgraph keeps running, so the operator believes they're uploading while every subsequent frame is silently discarded.
 
 I verified each of the four warehouse endpoints is currently live (see the table below for the per-endpoint status). The BME server in particular completes a TLS handshake then closes the stream on anonymous connections, which raises `ConnectionError` on the very first frame after every flowgraph start — operators running BME submission hit the bug without any attacker present.
 
